@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EcoSort - Waste Classification</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <style>
+        .camera-container {
+            position: relative;
+            width: 100%;
+            max-width: 640px;
+            margin: 0 auto;
+        }
+        #camera-preview {
+            width: 100%;
+            height: auto;
+            border-radius: 8px;
+        }
+        .loading {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+        }
+        .loading-content {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            color: white;
+        }
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 10px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen">
+    <div class="container mx-auto px-4 py-8">
+        <header class="text-center mb-8">
+            <h1 class="text-4xl font-bold text-green-600 mb-2">EcoSort</h1>
+            <p class="text-gray-600">Upload or take a photo to classify waste</p>
+        </header>
+
+        <div class="max-w-2xl mx-auto bg-white rounded-lg shadow-lg p-6">
+            <!-- Camera Preview -->
+            <div class="camera-container mb-6">
+                <video id="camera-preview" autoplay playsinline></video>
+                <div class="flex justify-center mt-4 space-x-4">
+                    <button id="start-camera" class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">
+                        Start Camera
+                    </button>
+                    <button id="capture-photo" class="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600" disabled>
+                        Take Photo
+                    </button>
+                </div>
+            </div>
+
+            <!-- File Upload -->
+            <div class="mb-6">
+                <label class="block text-gray-700 text-sm font-bold mb-2">
+                    Or upload an image:
+                </label>
+                <input type="file" id="file-input" accept="image/*" class="w-full p-2 border rounded">
+            </div>
+
+            <!-- Preview -->
+            <div id="preview-container" class="hidden mb-6">
+                <h3 class="text-lg font-semibold mb-2">Preview:</h3>
+                <img id="preview-image" class="max-w-full h-auto rounded">
+            </div>
+
+            <!-- Results -->
+            <div id="results" class="hidden">
+                <h3 class="text-lg font-semibold mb-2">Results:</h3>
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="bg-gray-50 p-4 rounded">
+                        <h4 class="font-medium text-gray-700">Prediction</h4>
+                        <p id="prediction-result" class="text-xl font-bold text-green-600"></p>
+                    </div>
+                    <div class="bg-gray-50 p-4 rounded">
+                        <h4 class="font-medium text-gray-700">Confidence</h4>
+                        <p id="confidence-result" class="text-xl font-bold text-blue-600"></p>
+                    </div>
+                </div>
+                <div class="mt-4">
+                    <img id="prediction-visualization" class="max-w-full h-auto rounded">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div id="loading" class="loading">
+        <div class="loading-content">
+            <div class="spinner"></div>
+            <p>Processing image...</p>
+        </div>
+    </div>
+
+    <script>
+        let stream = null;
+        const video = document.getElementById('camera-preview');
+        const startButton = document.getElementById('start-camera');
+        const captureButton = document.getElementById('capture-photo');
+        const fileInput = document.getElementById('file-input');
+        const previewContainer = document.getElementById('preview-container');
+        const previewImage = document.getElementById('preview-image');
+        const results = document.getElementById('results');
+        const predictionResult = document.getElementById('prediction-result');
+        const confidenceResult = document.getElementById('confidence-result');
+        const predictionVisualization = document.getElementById('prediction-visualization');
+        const loading = document.getElementById('loading');
+
+        // Start camera
+        startButton.addEventListener('click', async () => {
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                video.srcObject = stream;
+                startButton.disabled = true;
+                captureButton.disabled = false;
+            } catch (err) {
+                console.error('Error accessing camera:', err);
+                alert('Error accessing camera. Please make sure you have granted camera permissions.');
+            }
+        });
+
+        // Capture photo
+        captureButton.addEventListener('click', () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            canvas.getContext('2d').drawImage(video, 0, 0);
+            
+            canvas.toBlob(blob => {
+                const file = new File([blob], 'camera-photo.jpg', { type: 'image/jpeg' });
+                handleImage(file);
+            }, 'image/jpeg');
+        });
+
+        // Handle file upload
+        fileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                handleImage(file);
+            }
+        });
+
+        // Process image
+        async function handleImage(file) {
+            // Show preview
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                previewImage.src = e.target.result;
+                previewContainer.classList.remove('hidden');
+            };
+            reader.readAsDataURL(file);
+
+            // Show loading
+            loading.style.display = 'block';
+
+            // Send to server
+            const formData = new FormData();
+            formData.append('image', file);
+
+            try {
+                const response = await fetch('/predict', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+                
+                if (data.success) {
+                    // Update results
+                    predictionResult.textContent = data.prediction;
+                    confidenceResult.textContent = `${(data.confidence * 100).toFixed(1)}%`;
+                    predictionVisualization.src = data.prediction_image;
+                    results.classList.remove('hidden');
+                } else {
+                    alert('Error: ' + data.error);
+                }
+            } catch (err) {
+                console.error('Error:', err);
+                alert('Error processing image. Please try again.');
+            } finally {
+                loading.style.display = 'none';
+            }
+        }
+
+        // Clean up camera when leaving page
+        window.addEventListener('beforeunload', () => {
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+            }
+        });
+    </script>
+</body>
+</html> 
